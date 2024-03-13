@@ -3,12 +3,13 @@ import ast
 import csv
 import ipdb
 import os
+import pathlib
 from collections import defaultdict
 from datetime import date
 
+import numpy as np
 import pandas as pd
 
-from gptextract.dataprocessor.annots_info import AnnotsInfo
 from gptextract.dataprocessor.annots_for_inference import InferenceAnnots
 from gptextract.bratreader.brat import Collection
 from gptextract.prompts.prompt_design import Prompt
@@ -61,7 +62,7 @@ class AnnotationColl:
 
     @classmethod
     def read_existing_coll(cls, fname_coll, dir_coll):
-        df = pd.read_csv(os.path.join(dir_coll, fname_coll), quotechar='"')
+        df = pd.read_csv(os.path.join(dir_coll, fname_coll), quotechar='"', encoding='cp1252')
         df.drop_duplicates(inplace=True)
         annot_lst = list()
 
@@ -148,25 +149,28 @@ class OutputColl:
 
     @classmethod
     def read_existing_coll(cls, fname_coll, dir_coll):
-        df = pd.read_csv(os.path.join(dir_coll, fname_coll), quotechar='"')
+        df = pd.read_csv(os.path.join(dir_coll, fname_coll), quotechar='"', encoding='cp1252')
+        df = df.dropna(how='all')
         output_lst = list()
 
         for row in df.itertuples(index=False):
             if row.inference_type == 'entity':
-                parsed_output = parse_entity_output(row.model_output)
+                parsed_output = parse_entity_output(row.model_output.replace('\r\n', '\n'))
             elif row.inference_type == 'advanced_inference':
-                parsed_output = parse_namedtuples(row.model_output, row.inference_subtype)
+                parsed_output = parse_namedtuples(row.model_output.replace('\r\n', '\n'), row.inference_subtype)
             else:
                 raise ValueError("Unsupported inference type")
 
             if str(row.prompt_preamble) == 'nan':
                 prompt_preamble = ''
             else:
-                prompt_preamble = row.prompt_preamble
+                prompt_preamble = row.prompt_preamble.replace('\r\n', '\n')
 
-            cur_out = Output(row.doc_idx, row.section_name, row.section_text,
+            cur_out = Output(row.doc_idx,
+                             row.section_name, row.section_text.replace('\r\n', '\n'),
                              row.inference_type, row.inference_subtype, row.model_type, row.temperature,
-                             prompt_preamble, row.prompt, parsed_output
+                             prompt_preamble, row.prompt.replace('\r\n', '\n'),
+                             parsed_output
                              )
 
             output_lst.append(cur_out)
@@ -181,19 +185,19 @@ class OutputColl:
 
 
 class OncInfoExtr:
-    def __init__(self, sections_to_infer=('hpi', 'a&p'),
+    def __init__(self, coll_dir,
+                 sections_to_infer=('hpi', 'a&p'),
                  annotators=('expert', 'student1'),
                  inference_types=('entity', 'advanced_inference',),
                  fdata='onc_pn_ie_data.csv', foutput='onc_pn_ie_output.csv', fscores='scores.csv',
-                 data_dir='../../data/', output_dir='../../output/',
+                 data_dir='../data/', output_dir='../output/',
                  append_timestamp=True):
 
-        annots_info = AnnotsInfo()
+        self.collection = Collection.read_collection(coll_dir)
+        self.sections_to_infer = sections_to_infer
 
-        self.ie_texts = dict()  # {section_name: {annotated_fname: section_text}}
-        for key, values in annots_info.annotated_section_text.items():
-            if key in sections_to_infer:
-                self.ie_texts[key] = values
+        # Removing the skipped section annotations completely from the collection
+        # self.collection.remove_skipped_annots_from_collection()
 
         self.inference_types = inference_types
         self.annotators = annotators
@@ -218,36 +222,31 @@ class OncInfoExtr:
         if append_timestamp:
             self.fname_scores = self.fname_scores.rstrip('csv').rstrip('.') + '_' + str(date.today()) + '.csv'
 
-    def get_elements_for_inference(self, entities, relations, attributes):
-        inference_annots = InferenceAnnots(entities, relations, attributes)
+    def _get_section_texts_to_infer(self, sections_to_infer):
+        for doc_idx, doc in self.collection.documents.items():
+            for section in sections_to_infer:
+                print(self.collection.get_annots_by_section_name(doc, section))
 
+    def get_elements_for_inference(self, entities, attributes, relations):
+        inference_annots = InferenceAnnots(entities, attributes, relations)
+
+        # entity inference can be removed in the future.
         entity_mentions = inference_annots.get_entity_mentions_for_inference()
         advanced_inference_tuple_dict = inference_annots.get_tuples_for_advanced_inference()
 
         return entity_mentions, advanced_inference_tuple_dict
 
-    def create_ie_dataset(self, coll_dir, annotator_idx):
-        collection = Collection.read_collection(coll_dir)
-
+    def serialize_annotated_ie_dataset(self, annotator_idx):
         if os.path.exists(os.path.join(self.data_dir, self.fname_ie_data)):
             existing_coll = AnnotationColl.read_existing_coll(self.fname_ie_data, self.data_dir)
         else:
             existing_coll = None
-        
-        for section, texts in self.ie_texts.items():
-            for doc_idx, cur_sec_text in texts.items():
-                cur_sec_text = cur_sec_text.replace('', ' ')
-                document = collection.get_document(doc_idx)
-                if document is None:
-                    print("Document ", doc_idx, " not annotated by ", annotator_idx)
-                    continue
-                doc_text = document.text
-                section_start = doc_text.index(cur_sec_text)
-                section_end = section_start + len(cur_sec_text)
 
-                entities, relations, atts = collection.get_section_annots(doc_idx, section_start, section_end)
-
-                inference_entities, adv_inf_tuples = self.get_elements_for_inference(entities, relations, atts)
+        for doc_idx, doc in self.collection.documents.items():
+            for section in self.sections_to_infer:
+                cur_text, cur_ents, cur_atts, cur_rels = self.collection.get_annots_by_section_name(doc, section)
+                cur_text = cur_text.replace('', ' ')
+                inference_entities, adv_inf_tuples = self.get_elements_for_inference(cur_ents, cur_atts, cur_rels)
 
                 for cur_ent_type, annotated_entities in inference_entities.items():
                     if existing_coll and existing_coll.is_processed(
@@ -256,7 +255,7 @@ class OncInfoExtr:
                         continue
 
                     # serialize the input data
-                    annot_obj = Annotation(doc_idx, section, cur_sec_text, 'entity', cur_ent_type,
+                    annot_obj = Annotation(doc_idx, section, cur_text, 'entity', cur_ent_type,
                                         annotator_idx, annotated_entities)
                     annot_obj.serialize(self.fname_ie_data, self.data_dir)
 
@@ -270,14 +269,14 @@ class OncInfoExtr:
                         print("Skipping duplicate data entry")
                         continue
 
-                    annot_obj = Annotation(doc_idx, section, cur_sec_text, 'advanced_inference', cur_inf_type,
+                    annot_obj = Annotation(doc_idx, section, cur_text, 'advanced_inference', cur_inf_type,
                                            annotator_idx, str_tuple)
                     # serialize the input data
                     annot_obj.serialize(self.fname_ie_data, self.data_dir)
 
     def extract_information(self, model='gpt-35-turbo', backend='openai-azure'):
         if backend == 'openai-azure':
-            model_obj = OpenaiApiCall(model=model, temperature=0., max_tokens=512)
+            model_obj = OpenaiApiCall(model=model, temperature=0., max_tokens=4096)
         else:
             model_obj = HuggingfaceModel(model_name_or_path=model)
 
@@ -291,27 +290,32 @@ class OncInfoExtr:
         for cur_inference_type in self.inference_types:
             prompt_preamble = prompt_obj.get_prompt_preamble(model_obj.model_name, cur_inference_type)
             for cur_inference_subtype, prompt in prompt_obj.yield_inference_subtype_prompt(cur_inference_type):
-                for cur_section_type, cur_texts_dict in self.ie_texts.items():
-                    for cur_doc_idx, cur_sec_text in cur_texts_dict.items():
-                        cur_example = cur_doc_idx + cur_section_type + cur_inference_type + \
+                for cur_doc_idx, cur_doc in self.collection.documents.items():
+                    for section in self.sections_to_infer:
+                        cur_text, __, __, __ = self.collection.get_annots_by_section_name(cur_doc, section)
+                        cur_text = cur_text.replace('', ' ')
+                        cur_example = cur_doc_idx + section + cur_inference_type + \
                                       cur_inference_subtype + model_obj.model_name + str(model_obj.temperature) + \
                                       prompt_preamble + prompt
                         if existing_coll and existing_coll.is_processed(cur_example):
                             print("Instance already processed; continuing.")
                             continue
-                        cur_prompt = cur_sec_text + prompt
+
+                        cur_prompt = cur_text + prompt
 
                         # ipdb.set_trace()
                         # get model output
                         result = model_obj.get_response_text(cur_prompt, prompt_preamble)
-                        # try:
-                        #     result = model_obj.get_response_text(cur_prompt, prompt_preamble)
-                        # except Exception as e:
-                        #     print(e)
-                        #     break
+                        if result is None:
+                            print("Failed inference: ", cur_doc_idx, section, cur_inference_type,
+                                  cur_inference_subtype)
+                            print("Failed note text: ", cur_text)
+                            print("Failed prompt: ", prompt)
+                            print("Failed prompt preamble: ", prompt_preamble)
+                            continue
 
                         print("Response: ", result)
-                        output_obj = Output(cur_doc_idx, cur_section_type, cur_sec_text,
+                        output_obj = Output(cur_doc_idx, section, cur_text,
                                             cur_inference_type, cur_inference_subtype,
                                             model_obj.model_name, model_obj.temperature, prompt_preamble,
                                             prompt, result)
@@ -341,7 +345,6 @@ class OncInfoExtr:
             if type(cur_tuple) == CancerDiagnosis:
                 # print("skipping first cancer diagnosis")
                 continue
-
             tuple_primary_type = cur_tuple._fields[0]
             tuple_primary_val = cur_tuple[0]
 
@@ -369,28 +372,18 @@ class OncInfoExtr:
         annots_coll = AnnotationColl.read_existing_coll(self.fname_ie_data, self.data_dir)
         output_coll = OutputColl.read_existing_coll(self.fname_ie_output, self.output_dir)
 
-        for cur_output in output_coll.outputs:
+        for cur_output in output_coll.outputs: # cur_output is the list of all outputs generated by a model at once
             for annotator_idx in self.annotators:
                 if not annots_coll.is_annotated(cur_output.doc_idx, annotator_idx):
                     continue
+
+                # matching annots are the list of all corresponding annotations
                 matching_annots = annots_coll.get_annot_from_coll(cur_output.doc_idx, cur_output.section_name,
                                                                   cur_output.inf_type, cur_output.inf_subtype,
                                                                   annotator_idx)
 
                 if not len(matching_annots):  # the annotation does not exist in the document
-                    if cur_output.inf_type == 'entity':
-                        matching_annots = [
-                            Annotation(
-                                doc_idx=cur_output.doc_idx,
-                                section_name=cur_output.section_name,
-                                section_text=cur_output.section_text,
-                                inf_type=cur_output.inf_type,
-                                inf_subtype=cur_output.inf_subtype,
-                                annotator=annotator_idx,
-                                annotations={'none', 'no', 'n/a', 'unknown'}
-                            )
-                        ]
-                    elif cur_output.inf_type == 'advanced_inference':
+                    if cur_output.inf_type == 'advanced_inference':
                         matching_annots = [
                             Annotation(
                                 doc_idx=cur_output.doc_idx,
@@ -408,56 +401,40 @@ class OncInfoExtr:
 
                 annot = matching_annots[0]
 
-                # for annot in matching_annots:
-                annotations = annot.annotations
-
-                if annot.inf_type == 'entity':
-                    annotations = self._format_entity_annot_for_eval(annotations, annot.inf_subtype)
-                    outputs = [item.lower() for item in cur_output.output]
-                    if not len(outputs):
-                        outputs = ['none']
-
-                    annots_for_scoring = [annotations for _ in range(len(outputs))]
-
-                    bleu = metrics.compute_bleu_score(outputs, annots_for_scoring)['bleu']
-
-                    rouge1 = metrics.compute_rouge_score(outputs, annots_for_scoring,
-                                                         rouge_types=['rouge1'])['rouge1']
-
-                    cur_scores = {
-                        'doc_idx': annot.doc_idx,
-                        'section_name': annot.section_name,
-                        'inference_type': annot.inf_type,
-                        'inference_subtype': annot.inf_subtype,
-                        'model_type': cur_output.model_type,
-                        'temp': cur_output.temp,
-                        'prompt': cur_output.prompt,
-                        'cur_pred_type': 'Unknown',
-                        'annotator_idx': annotator_idx,
-                        'bleu': bleu,
-                        'rouge1': rouge1,
-
-                    }
-                    scores.append(cur_scores)
-
-                elif annot.inf_type == 'advanced_inference':
-                    annotations = self._format_tuple_annots_for_eval(annotations)
+                if annot.inf_type == 'advanced_inference':
+                    annotations = self._format_tuple_annots_for_eval(annot.annotations)
                     outputs = self._format_tuple_annots_for_eval(cur_output.output)
 
+                    # outputs is a dictionary {relation: [all outputs of that relation type]}
                     for cur_pred_type, cur_pred_vals in outputs.items():
                         cur_pred_vals = [item.lower() for item in cur_pred_vals]
                         cur_annot_vals = annotations[cur_pred_type]
                         if not len(cur_annot_vals):
                             # may never be used; retaining regardless.
-                            cur_annot_vals = ['none', 'no', 'n/a', 'unknown']
+                            cur_annot_vals = ['none'] #, 'no', 'n/a', 'unknown']
                         else:
                             cur_annot_vals = [item.lower() for item in cur_annot_vals]
-                        annots_for_scoring = [cur_annot_vals for _ in range(len(cur_pred_vals))]
 
-                        bleu = metrics.compute_bleu_score(cur_pred_vals, annots_for_scoring)['bleu']
+                        bleus, rouge1s = list(), list() # computing mean bleu and rouge for multi-set output
+                        for cur_pred in cur_pred_vals:
+                            bleu = metrics.compute_bleu_score(preds=[cur_pred],
+                                                              references=[cur_annot_vals],
+                                                              max_n=4,
+                                                              smooth=True
+                                                              )['bleu']
+                            bleus.append(bleu)
 
-                        rouge1 = metrics.compute_rouge_score(cur_pred_vals, annots_for_scoring,
-                                                             rouge_types=['rouge1'])['rouge1']
+                        for cur_annot in cur_annot_vals:
+                            cur_rouges = []
+                            for cur_pred in cur_pred_vals:
+                                rouge1 = metrics.compute_rouge_score(preds=[cur_pred], references=[cur_annot],
+                                                                     rouge_types=['rouge1']
+                                                                     )['rouge1']
+                                cur_rouges.append(rouge1)
+                            rouge1s.append(np.max(cur_rouges))
+
+                        em_p, em_r, em_f1 = metrics.compute_em_over_multiset_prec_recall_f1(cur_pred_vals,
+                                                                                            cur_annot_vals)
 
                         cur_scores = {
                             'doc_idx': annot.doc_idx,
@@ -469,9 +446,11 @@ class OncInfoExtr:
                             'prompt': cur_output.prompt,
                             'cur_pred_type': cur_pred_type,
                             'annotator_idx': annotator_idx,
-                            'bleu': bleu,
-                            'rouge1': rouge1,
-
+                            'bleu4': np.mean(bleus),
+                            'rouge1': np.mean(rouge1s),
+                            'em_prec': em_p,
+                            'em_recall': em_r,
+                            'em_f1': em_f1,
                         }
                         scores.append(cur_scores)
 
@@ -481,87 +460,126 @@ class OncInfoExtr:
 
         return scores
 
-    def aggregate_scores(self):
+    def aggregate_scores(self, fscores='agg_scores.csv'):
         df = pd.read_csv(os.path.join(self.output_dir, self.fname_scores))
+        # pd.set_option('display.max_rows', None)
+        # pd.set_option('display.max_columns', None)
 
-        df = df.groupby(['inference_type', 'inference_subtype', 'cur_pred_type',
+        agg_df = df.groupby(['inference_type', 'inference_subtype', 'cur_pred_type',
                          'annotator_idx', 'model_type', 'temp', 'prompt',
-                         ]).agg({'bleu': ['mean'],
-                                 'rouge1': ['mean']}
-                                )
+                         ]).agg(mean_bleu4=('bleu4', 'mean'),
+                                 mean_rouge1=('rouge1', 'mean'),
+                                 mean_em_prec=('em_prec', 'mean'),
+                                 mean_em_recall=('em_recall', 'mean'),
+                                 mean_em_f1=('em_f1', 'mean'),
+                                 )
+        agg_df.to_csv(os.path.join(self.output_dir, fscores))
+        agg_df = agg_df.reset_index()
+        agg_df = self._reorganize_scores_df(agg_df)
+        agg_df.to_csv(os.path.join(self.output_dir, 'results_overall.csv'), index=False)
 
-        pd.set_option('display.max_rows', None)
-        pd.set_option('display.max_columns', None)
-        print(df)
+        # Breast cancer only
+        path_obj = pathlib.Path('../data/all_annotated/breastca')
+        bc_doc_idx = [os.path.splitext(os.path.basename(fname))[0] for fname in path_obj.rglob("*.txt")]
+        bc_df = df[df['doc_idx'].isin(bc_doc_idx)]
 
-    def quantify_common_annotated_reports(self):
-        common_df = list()
+        agg_bc_df = bc_df.groupby(['inference_type', 'inference_subtype', 'cur_pred_type',
+                             'annotator_idx', 'model_type', 'temp', 'prompt',
+                             ]).agg(mean_bleu4=('bleu4', 'mean'),
+                                 mean_rouge1=('rouge1', 'mean'),
+                                 mean_em_prec=('em_prec', 'mean'),
+                                 mean_em_recall=('em_recall', 'mean'),
+                                 mean_em_f1=('em_f1', 'mean'),
+                                 )
+        agg_bc_df = agg_bc_df.reset_index()
+        agg_bc_df = self._reorganize_scores_df(agg_bc_df)
+        agg_bc_df.to_csv(os.path.join(self.output_dir, 'results_bc.csv'), index=False)
 
-        df = pd.read_csv(os.path.join(self.output_dir, self.fname_scores))
+        # Pancreatic cancer only
+        pdac_df = df[~df['doc_idx'].isin(bc_df['doc_idx'].unique())]
+        agg_pdac_df = pdac_df.groupby(['inference_type', 'inference_subtype', 'cur_pred_type',
+                                    'annotator_idx', 'model_type', 'temp', 'prompt',
+                                    ]).agg(mean_bleu4=('bleu4', 'mean'),
+                                         mean_rouge1=('rouge1', 'mean'),
+                                         mean_em_prec=('em_prec', 'mean'),
+                                         mean_em_recall=('em_recall', 'mean'),
+                                         mean_em_f1=('em_f1', 'mean'),
+                                         mean_sem_prec=('sem_prec', 'mean'),
+                                         mean_sem_recall=('sem_recall', 'mean'),
+                                         mean_sem_f1=('sem_f1', 'mean'),
+                                        )
+        agg_pdac_df = agg_pdac_df.reset_index()
+        agg_pdac_df = self._reorganize_scores_df(agg_pdac_df)
+        agg_pdac_df.to_csv(os.path.join(self.output_dir, 'results_pdac.csv'), index=False)
 
-        for cur_idx in df['doc_idx'].unique():
-            cur_df = df[df['doc_idx'] == cur_idx]
+    def _reorganize_scores_df(self, scores_df):
+        def _modify_med_rel(row):
+            if '_med_' in row['inference_subtype']:
+                prefix = row['inference_subtype'].split('_')[0]
+                return f'{prefix.title()}{row["cur_pred_type"]}'
+            else:
+                return row['cur_pred_type']
 
-            cur_annotators = cur_df['annotator_idx'].unique()
+        def _modify_symptom_rel(row):
+            if 'symptoms' in row['inference_subtype']:
+                prefix = ''.join([subword.capitalize() for subword in row['inference_subtype'].split('_')])
+                return f'{prefix} {row["cur_pred_type"].split()[1]}'
+            else:
+                return row['cur_pred_type']
 
-            if len(cur_annotators) == 2:
-                common_df.append(cur_df)
+        # Apply the function to each row in the DataFrame
+        scores_df['cur_pred_type'] = scores_df.apply(_modify_med_rel, axis=1)
+        scores_df['cur_pred_type'] = scores_df.apply(_modify_symptom_rel, axis=1)
 
-        df = pd.concat(common_df)
-
-        df = df.groupby(['inference_type', 'inference_subtype', 'cur_pred_type',
-                         'annotator_idx', 'model_type', 'temp', 'prompt',
-                         ]).agg({'bleu': ['mean'],
-                                 'rouge1': ['mean']}
-                                )
-
-        pd.set_option('display.max_rows', None)
-        pd.set_option('display.max_columns', None)
-        print("Results on common annotated reports only: ")
-        print(df)
-
-    def remove_useless_outputs(self):
-        df_scores = pd.read_csv(os.path.join(self.output_dir, self.fname_scores))
-        prompt_obj = Prompt()
         new_df = list()
+        metrics = [col for col in scores_df.columns if 'mean' in col]
+        for cur_rel in scores_df['cur_pred_type'].unique():
+            cur_dict = dict()
+            cur_dict['Relation'] = cur_rel
+            for metric in metrics:
+                for model in scores_df['model_type'].unique():
+                    cur_df = scores_df[(scores_df['cur_pred_type'] == cur_rel) &
+                                       (scores_df['model_type'] == model)
+                                       ]
+                    if 'flan-ul2' in model:
+                        model = 'FLANUL2'
+                    elif 'gpt-35-turbo' in model:
+                        model = 'GPT3.5'
+                    cur_dict[metric[5:].upper()+'_'+model.upper()] = round(cur_df[metric].item(), 2)
+            new_df.append(cur_dict)
 
-        for cur_type in df_scores['inference_subtype'].unique():
-            cur_df = df_scores[df_scores['inference_subtype'] == cur_type]
-            for cur_prompt in cur_df['prompt'].unique():
-                if str(cur_prompt) == 'nan':
-                    continue
-                if len(cur_df['inference_type'].unique()) > 1:
-                    raise ValueError("More than one inference type!", cur_df)
-                if (cur_type in prompt_obj.adv_criteria_to_prompt_mapping or
-                    cur_type in prompt_obj.entity_to_prompt_mapping) and (
-                        cur_prompt == prompt_obj.get_prompt(cur_df['inference_type'].unique()[0], cur_type)):
-                    new_df.append(cur_df[cur_df['prompt'] == cur_prompt])
-                else:
-                    print(cur_prompt)
+        new_df = pd.DataFrame(new_df)
+        # Rename fields for plotting
+        new_df['Relation'].replace('PrescribedMedicationName PotentialAdvEvent',
+                                   'PrescribedMedicationName PotentialAdverseEvent', inplace=True)
+        new_df['Relation'].replace('PrescribedMedicationName ConfirmedAdvEvent',
+                                   'PrescribedMedicationName ConfirmedAdverseEvent', inplace=True)
+        new_df['Relation'].replace('FutureMedicationName PotentialAdvEvent',
+                                   'FutureMedicationName PotentialAdverseEvent', inplace=True)
 
-        new_df = pd.concat(new_df)
-        new_df.to_csv(os.path.join(self.output_dir, self.fname_scores), index=False)
+        return new_df
 
 
 def main(coll_dir, model='gpt-35-turbo', do_eval=True):
-    ie_extractor = OncInfoExtr(
-        inference_types=('advanced_inference',),  # important to add , in the end to avoid character iteration
-        annotators=coll_dir.keys(),
-        fdata='onc_pn_ie_data_2023-03-31.csv',
-        foutput='onc_pn_ie_output_2023-03-31.csv',
-        fscores='scores_2023-03-31.csv',
-        append_timestamp=False)
-
     for annotator_idx in coll_dir.keys():
-        ie_extractor.create_ie_dataset(coll_dir[annotator_idx], annotator_idx)
+        ie_extractor = OncInfoExtr(
+            coll_dir=coll_dir[annotator_idx],
+            inference_types=('advanced_inference',),  # important to add , in the end to avoid character iteration
+            annotators=coll_dir.keys(),
+            fdata='onc_pn_ie_data',
+            foutput='onc_pn_ie_output',
+            fscores='scores.csv',
+            append_timestamp=True)
 
-    if 'gpt-35' in model or 'gpt-4' in model:
-        ie_extractor.extract_information(model=model, backend='openai-azure')
-    else:
-        ie_extractor.extract_information(model=model, backend='hf')
+        ie_extractor.serialize_annotated_ie_dataset(annotator_idx)
 
-    if do_eval:
-        ie_extractor.evaluate()
+        if 'gpt-35' in model or 'gpt-4' in model:
+            ie_extractor.extract_information(model=model, backend='openai-azure')
+        else:
+            ie_extractor.extract_information(model=model, backend='hf')
+
+        if do_eval:
+            ie_extractor.evaluate()
 
 
 if __name__ == "__main__":
@@ -583,7 +601,7 @@ if __name__ == "__main__":
     parser.add_argument("-model",
                         default='gpt-35-turbo',
                         type=str,
-                        required=True,
+                        required=False,
                         help="Model name")
 
     parser.add_argument("--evaluate", action="store_true", help="Evaluates the model")
@@ -595,4 +613,3 @@ if __name__ == "__main__":
     }
 
     main(coll_dir, args.model, args.evaluate)
-
