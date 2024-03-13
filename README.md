@@ -39,3 +39,8 @@ PhysioNet citation:
 Goldberger, A., Amaral, L., Glass, L., Hausdorff, J., Ivanov, P. C., Mark, R., ... & Stanley, H. E. (2000). PhysioBank, PhysioToolkit, and PhysioNet: Components of a new research resource for complex physiologic signals. Circulation [Online]. 101 (23), pp. e215–e220.
 ```
 
+### LICENSE
+The code and annotation schema is shared under Creative Commons Attribution-NonCommercial-ShareAlike (CC BY-NC-SA)
+Further details can be found on [this](https://creativecommons.org/licenses/by-nc-sa/4.0/) page. 
+Additionally, the dataset is shared under the PhysioNet Credentialed Health Data License 1.5.0, which is intended to be used only within non-commercial, sharealike setups similar to the CC BY-NC-SA license.
+
