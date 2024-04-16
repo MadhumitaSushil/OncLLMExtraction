@@ -1,9 +1,7 @@
 import argparse
-import ast
 import csv
 import ipdb
 import os
-import pathlib
 from collections import defaultdict
 from datetime import date
 
@@ -197,11 +195,6 @@ class OncInfoExtr:
         if append_timestamp:
             self.fname_scores = self.fname_scores.rstrip('csv').rstrip('.') + '_' + str(date.today()) + '.csv'
 
-    def _get_section_texts_to_infer(self, sections_to_infer):
-        for doc_idx, doc in self.collection.documents.items():
-            for section in sections_to_infer:
-                print(self.collection.get_annots_by_section_name(doc, section))
-
     def get_elements_for_inference(self, entities, attributes, relations):
         inference_annots = InferenceAnnots(entities, attributes, relations)
         advanced_inference_tuple_dict = inference_annots.get_tuples_for_advanced_inference()
@@ -282,20 +275,6 @@ class OncInfoExtr:
                         # save the result
                         output_obj.serialize(self.fname_ie_output, self.output_dir)
 
-
-    @staticmethod
-    def _format_entity_annot_for_eval(annotation, inference_subtype):
-
-        annotation = [item.lower() for item in annotation]
-
-        if inference_subtype.lower() in ['metastasis', 'remission', 'hospice', 'radiationtherapyname'] \
-                and len(annotation):
-            annotation = ['yes']
-
-        if not len(annotation):
-            annotation = ['none', 'no', 'n/a', 'unknown']
-
-        return annotation
 
     @staticmethod
     def _format_tuple_annots_for_eval(tuple_list):

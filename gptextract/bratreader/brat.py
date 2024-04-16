@@ -1,11 +1,13 @@
 import os
+import pathlib
+import difflib
 
 preannotated_ents = (
             'PROBLEM',
             'TREATMENT',
             'TEST',
             'SectionAnnotate',
-            'SectionSkip'
+            # 'SectionSkip'
         )
 
 
@@ -207,17 +209,17 @@ class Collection:
     @classmethod
     def read_collection(cls, coll_dir):
         documents = dict()
+        path_obj = pathlib.Path(coll_dir)
 
-        for fname in os.listdir(coll_dir):
-            if fname.endswith('.txt'):
-                doc_idx = os.path.splitext(os.path.basename(fname))[0]
-                ann_file = os.path.join(coll_dir, doc_idx+'.ann')
+        for fname in path_obj.rglob("*.txt"):
+            doc_idx = os.path.splitext(os.path.basename(fname))[0]
+            ann_file = os.path.join(os.path.dirname(fname), doc_idx+'.ann')
 
-                if not os.path.exists(ann_file):
-                    continue
+            if not os.path.exists(ann_file):
+                continue
 
-                cur_doc = Document.read(doc_idx, coll_dir)
-                documents[doc_idx] = cur_doc
+            cur_doc = Document.read(doc_idx, os.path.dirname(fname))
+            documents[doc_idx] = cur_doc
 
         return cls(documents)
 
@@ -227,30 +229,113 @@ class Collection:
         else:
             return None
 
-    def get_section_annots(self, doc_idx, section_start, section_end):
-        document = self.get_document(doc_idx)
+    def get_annots_by_section_name(self, doc, section_name):
+        section_text = ''
+        section_ents, section_atts, section_rels = list(), list(), list()
 
+        offsets = self._get_section_offsets(doc, section_name)
+        for (start, end) in offsets:
+            section_text += doc.text[start: end]
+            ents, rels, atts = self._get_section_annots(doc, start, end)
+            section_ents.extend(ents)
+            section_atts.extend(atts)
+            section_rels.extend(rels)
+
+        return section_text, section_ents, section_atts, section_rels
+
+    def _get_section_offsets(self, doc, section_name):
+        if section_name.lower() == 'hpi':
+            start_ent = 'hpi_start'
+            end_ent = 'hpi_end'
+        elif section_name.lower() == 'a&p':
+            start_ent = 'ap_start'
+            end_ent = 'ap_end'
+        else:
+            raise ValueError("Unsupported section name. Supported sections are (hpi|a&p)")
+
+        start_offsets, end_offsets = list(), list()
+        for ent in doc.entities:
+            if ent.type == start_ent:
+                start_offsets.append(ent.start)
+            elif ent.type == end_ent:
+                end_offsets.append(ent.end + 1)
+
+        offsets = list()
+        for start, end in zip(sorted(start_offsets), sorted(end_offsets)):
+            offsets.append((start, end))
+
+        return offsets
+
+    def _get_section_annots(self, doc, section_start, section_end):
         section_ents, section_rels, section_atts = list(), list(), list()
         section_ents_idx = set()
 
-        for cur_ent in document.entities:
+        for cur_ent in doc.entities:
             if cur_ent.start >= section_start and cur_ent.end <= section_end:
                 section_ents.append(cur_ent)
                 section_ents_idx.add(cur_ent.idx)
 
-        for cur_rel in document.relations:
+        for cur_rel in doc.relations:
             if cur_rel.ent1.idx in section_ents_idx and cur_rel.ent2.idx in section_ents_idx:
                 section_rels.append(cur_rel)
 
-        for cur_att in document.attributes:
+        for cur_att in doc.attributes:
             if cur_att.ent.idx in section_ents_idx:
                 section_atts.append(cur_att)
 
         return section_ents, section_rels, section_atts
 
+    def remove_skipped_annots_from_collection(self):
+        for doc_idx, doc in self.documents.items():
+            skip_offsets = self._get_skip_offsets(doc)
+            doc.text, doc.entities, doc.attributes, doc.relations = self._get_filtered_data(doc, skip_offsets)
 
+    def _get_skip_offsets(self, doc):
+        """
+        We need to retrieve skip offsets in this complex and space-inefficient manner because the offsets of the
+        skip sections are frequently overlapping because of how data is annotated.
+        """
+        is_retain = [True] * len(doc.text)
+        for ent in doc.entities:
+            if ent.type.lower().strip() == 'sectionskip':
+                is_retain[ent.start: ent.end] = [False] * (ent.end - ent.start)
 
+        skip_offsets = list()
 
+        start, end = None, None
+        for i, char in enumerate(is_retain):
+            if start is None and char:
+                continue
+            elif start is None and not char:
+                start = i
+            elif start is not None and char:
+                end = i
+                skip_offsets.append((start, end))
+                start = None
+        if start:
+            end = len(is_retain)
+            skip_offsets.append((start, end))
+        return skip_offsets #, is_retain
 
+    def _get_filtered_data(self, doc, skip_offsets):
+        """Retain text and annotations only for the sections that were not skipped."""
+        annotated_text = ''
+        annotated_ents, annotated_atts, annotated_rels = list(), list(), list()
+        prev_end = 0
+        for (skip_start, skip_end) in skip_offsets:
+            annotated_text += doc.text[prev_end: skip_start]
+            entities, relations, atts = self._get_section_annots(doc.doc_idx, prev_end, skip_start)
+            annotated_ents.extend(entities)
+            annotated_atts.extend(atts)
+            annotated_rels.extend(relations)
 
+            prev_end = skip_end
 
+        # Adding segment at the end of the last skipped section
+        annotated_text += doc.text[prev_end:]
+        entities, relations, atts = self._get_section_annots(doc.doc_idx, prev_end, len(doc.text))
+        annotated_ents.extend(entities)
+        annotated_atts.extend(atts)
+        annotated_rels.extend(relations)
+
+        return annotated_text, annotated_ents, annotated_atts, annotated_rels
