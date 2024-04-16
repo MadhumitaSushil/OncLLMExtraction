@@ -108,7 +108,7 @@ class Output:
                    'model_type', 'temperature', 'prompt_preamble', 'prompt', 'model_output'
                    ]
 
-        data = [self.doc_idx, self.section_name, self.section_text, self.inf_type, self.inf_subtype,
+        data = [str(self.doc_idx), self.section_name, self.section_text, self.inf_type, self.inf_subtype,
                 self.model_type, self.temp, self.prompt_preamble, self.prompt, self.output]
 
         with open(os.path.join(dir_output, fname_output), 'a') as f:
@@ -129,7 +129,7 @@ class OutputColl:
 
     @classmethod
     def read_existing_coll(cls, fname_coll, dir_coll):
-        df = pd.read_csv(os.path.join(dir_coll, fname_coll), quotechar='"', encoding='cp1252')
+        df = pd.read_csv(os.path.join(dir_coll, fname_coll), quotechar='"')
         df = df.dropna(how='all')
         output_lst = list()
 
