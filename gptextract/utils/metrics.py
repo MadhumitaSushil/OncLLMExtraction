@@ -19,6 +19,10 @@ class Metrics:
             print("Supported tokenizers: (gpt|default). Using default.")
             self.tokenizer = None
 
+        self.bleu = evaluate.load("bleu")
+        self.rouge = evaluate.load('rouge')
+        self.f1_func = evaluate.load("f1")
+
         self.semantic_scorer = OpenaiApiCall(model='gpt-4')
 
     def compute_bleu_score(self, preds, references, max_n=1, smooth=False, **kwargs):
@@ -27,14 +31,13 @@ class Metrics:
         :param references: list of list of all references for all predictions.
         :return: results
         """
-        bleu = evaluate.load("bleu")
 
         if self.tokenizer is not None:
-            results = bleu.compute(predictions=preds, references=references, max_order=max_n, smooth=smooth,
+            results = self.bleu.compute(predictions=preds, references=references, max_order=max_n, smooth=smooth,
                                    tokenizer=self.tokenizer.tokenize, **kwargs
                                    )
         else:
-            results = bleu.compute(predictions=preds, references=references, max_order=max_n, smooth=smooth,
+            results = self.bleu.compute(predictions=preds, references=references, max_order=max_n, smooth=smooth,
                                    **kwargs)
 
         return results
@@ -47,13 +50,13 @@ class Metrics:
         :param kwargs: any additional supported parameters for metric computation
         :return: rouge score results
         """
-        rouge = evaluate.load('rouge')
+
         if self.tokenizer is not None:
-            results = rouge.compute(predictions=preds, references=references, rouge_types=rouge_types,
+            results = self.rouge.compute(predictions=preds, references=references, rouge_types=rouge_types,
                                     tokenizer=self.tokenizer.tokenize, **kwargs
                                     )
         else:
-            results = rouge.compute(predictions=preds, references=references, rouge_types=rouge_types,
+            results = self.rouge.compute(predictions=preds, references=references, rouge_types=rouge_types,
                                     use_stemmer=True, **kwargs
                                     )
         return results
@@ -73,8 +76,8 @@ class Metrics:
         """
         Macro or micro F1 score for classification values
         """
-        f1_func = evaluate.load("f1")
-        f1_score = f1_func.compute(references=references, predictions=preds, average=average, pos_label=pos_label,
+
+        f1_score = self.f1_func.compute(references=references, predictions=preds, average=average, pos_label=pos_label,
                                    **kwargs)
 
         return f1_score
