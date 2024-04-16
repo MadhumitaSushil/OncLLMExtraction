@@ -6,9 +6,7 @@ source ~/anaconda3/etc/profile.d/conda.sh
 conda activate gptextract
 export PYTHONPATH=~/GptExtract/:$PYTHONPATH
 
-CUDA_VISIBLE_DEVICES=$SGE_GPU python3 run_pn_benchmarking.py -model 'gpt-35-turbo'
-
-CUDA_VISIBLE_DEVICES=$SGE_GPU python3 run_pn_benchmarking.py -model 'gpt-4'
-
-CUDA_VISIBLE_DEVICES=$SGE_GPU python3 run_pn_benchmarking.py -model '/wynton/group/ichs/shared_models/flan-ul2/' --evaluate
+coral_dir='../coral/annotated/'
+model_name_or_path='/wynton/group/ichs/shared_models/flan-ul2/'
+python3 run_pn_benchmarking.py -annotations_path $coral_dir -model $model_name_or_path --evaluate
 
