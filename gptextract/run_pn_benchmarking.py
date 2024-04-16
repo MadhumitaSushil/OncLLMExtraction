@@ -125,7 +125,7 @@ class OutputColl:
     def __init__(self, output_lst):
         self.outputs = output_lst
 
-        self.processed = {cur_out.doc_idx + cur_out.section_name + cur_out.inf_type + cur_out.inf_subtype +
+        self.processed = {str(cur_out.doc_idx) + cur_out.section_name + cur_out.inf_type + cur_out.inf_subtype +
                           str(cur_out.model_type) + str(cur_out.temp) + cur_out.prompt_preamble + cur_out.prompt
                           for cur_out in self.outputs}
 
