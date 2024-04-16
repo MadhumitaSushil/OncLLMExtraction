@@ -375,7 +375,7 @@ class OncInfoExtr:
                         bleu = metrics.compute_bleu_score(preds=[cur_pred],
                                                           references=[cur_annot_vals],
                                                           max_n=4,
-                                                          smooth=True
+                                                          smooth=True,
                                                           )['bleu']
                         bleus.append(bleu)
 
@@ -387,7 +387,6 @@ class OncInfoExtr:
                                                                  )['rouge1']
                             cur_rouges.append(rouge1)
                         rouge1s.append(np.max(cur_rouges))
-
                     em_p, em_r, em_f1 = metrics.compute_em_over_multiset_prec_recall_f1(cur_pred_vals,
                                                                                         cur_annot_vals)
 
@@ -416,11 +415,9 @@ class OncInfoExtr:
 
     def aggregate_scores(self, fscores='agg_scores.csv'):
         df = pd.read_csv(os.path.join(self.output_dir, self.fname_scores))
-        # pd.set_option('display.max_rows', None)
-        # pd.set_option('display.max_columns', None)
 
         agg_df = df.groupby(['inference_type', 'inference_subtype', 'cur_pred_type',
-                         'annotator_idx', 'model_type', 'temp', 'prompt',
+                         'model_type', 'temp', 'prompt',
                          ]).agg(mean_bleu4=('bleu4', 'mean'),
                                  mean_rouge1=('rouge1', 'mean'),
                                  mean_em_prec=('em_prec', 'mean'),
@@ -431,40 +428,6 @@ class OncInfoExtr:
         agg_df = agg_df.reset_index()
         agg_df = self._reorganize_scores_df(agg_df)
         agg_df.to_csv(os.path.join(self.output_dir, 'results_overall.csv'), index=False)
-
-        # Breast cancer only
-        path_obj = pathlib.Path('../data/all_annotated/breastca')
-        bc_doc_idx = [os.path.splitext(os.path.basename(fname))[0] for fname in path_obj.rglob("*.txt")]
-        bc_df = df[df['doc_idx'].isin(bc_doc_idx)]
-
-        agg_bc_df = bc_df.groupby(['inference_type', 'inference_subtype', 'cur_pred_type',
-                             'annotator_idx', 'model_type', 'temp', 'prompt',
-                             ]).agg(mean_bleu4=('bleu4', 'mean'),
-                                 mean_rouge1=('rouge1', 'mean'),
-                                 mean_em_prec=('em_prec', 'mean'),
-                                 mean_em_recall=('em_recall', 'mean'),
-                                 mean_em_f1=('em_f1', 'mean'),
-                                 )
-        agg_bc_df = agg_bc_df.reset_index()
-        agg_bc_df = self._reorganize_scores_df(agg_bc_df)
-        agg_bc_df.to_csv(os.path.join(self.output_dir, 'results_bc.csv'), index=False)
-
-        # Pancreatic cancer only
-        pdac_df = df[~df['doc_idx'].isin(bc_df['doc_idx'].unique())]
-        agg_pdac_df = pdac_df.groupby(['inference_type', 'inference_subtype', 'cur_pred_type',
-                                    'annotator_idx', 'model_type', 'temp', 'prompt',
-                                    ]).agg(mean_bleu4=('bleu4', 'mean'),
-                                         mean_rouge1=('rouge1', 'mean'),
-                                         mean_em_prec=('em_prec', 'mean'),
-                                         mean_em_recall=('em_recall', 'mean'),
-                                         mean_em_f1=('em_f1', 'mean'),
-                                         mean_sem_prec=('sem_prec', 'mean'),
-                                         mean_sem_recall=('sem_recall', 'mean'),
-                                         mean_sem_f1=('sem_f1', 'mean'),
-                                        )
-        agg_pdac_df = agg_pdac_df.reset_index()
-        agg_pdac_df = self._reorganize_scores_df(agg_pdac_df)
-        agg_pdac_df.to_csv(os.path.join(self.output_dir, 'results_pdac.csv'), index=False)
 
     def _reorganize_scores_df(self, scores_df):
         def _modify_med_rel(row):
@@ -495,10 +458,7 @@ class OncInfoExtr:
                     cur_df = scores_df[(scores_df['cur_pred_type'] == cur_rel) &
                                        (scores_df['model_type'] == model)
                                        ]
-                    if 'flan-ul2' in model:
-                        model = 'FLANUL2'
-                    elif 'gpt-35-turbo' in model:
-                        model = 'GPT3.5'
+                    model = os.path.basename(model.rstrip('/')).upper()
                     cur_dict[metric[5:].upper()+'_'+model.upper()] = round(cur_df[metric].item(), 2)
             new_df.append(cur_dict)
 
@@ -514,7 +474,7 @@ class OncInfoExtr:
         return new_df
 
 
-def main(data_dir, model='gpt-35-turbo', do_eval=True):
+def main(data_dir, model, do_eval=True):
     ie_extractor = OncInfoExtr(
         coll_dir=data_dir,
         inference_types=('advanced_inference',),  # important to add , in the end to avoid character iteration
