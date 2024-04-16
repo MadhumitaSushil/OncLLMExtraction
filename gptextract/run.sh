@@ -4,7 +4,7 @@ export PATH=$PATH:~/anaconda3/bin
 export PATH=$PATH:~/usr/lib64
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate gptextract
-export PYTHONPATH=~/GptExtract/:$PYTHONPATH
+export PYTHONPATH=~/Papers/Onc-PN/OncLLMExtraction/:$PYTHONPATH
 
 coral_dir='../coral/annotated/'
 model_name_or_path='/wynton/group/ichs/shared_models/flan-ul2/'
