@@ -3,10 +3,10 @@ from collections import defaultdict
 from gptextract import *
 
 class InferenceAnnots:
-    def __init__(self, entities, relations, attributes):
+    def __init__(self, entities, attributes, relations):
         self.all_entities = entities
-        self.all_relations = relations
         self.all_attributes = attributes
+        self.all_relations = relations
 
         self.temporal_rels = ('HappensAtOnDuring',
                               'BeginsOnOrAt',
@@ -353,7 +353,6 @@ class InferenceAnnots:
         genomictest = self._filter_assertion(genomictest)
         genomictest_datetimes = self._get_entity_pairs_in_relation(genomictest, self.temporal_rels)
         genomictest_results = self._get_entity_pairs_in_relation(genomictest, self.result_rels)
-        print(genomictest_results)
 
         for ent in genomictest:
             dates = genomictest_datetimes[ent]
