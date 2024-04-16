@@ -1,17 +1,14 @@
-import os
 import evaluate
-import transformers
-
-from gptextract.modeling.openai_api_azure import OpenaiApiCall
 
 # Somehow evaluate doesn't work for me without this:
-os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
+# os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 
 
 class Metrics:
 
     def __init__(self, tokenizer='default'):
         if tokenizer.lower() == 'gpt':
+            import transformers
             self.tokenizer = transformers.OpenAIGPTTokenizerFast.from_pretrained("openai-gpt")
         elif tokenizer.lower() == 'default':
             self.tokenizer = None
@@ -23,8 +20,6 @@ class Metrics:
         self.rouge = evaluate.load('rouge')
         self.f1_func = evaluate.load("f1")
 
-        self.semantic_scorer = OpenaiApiCall(model='gpt-4')
-
     def compute_bleu_score(self, preds, references, max_n=1, smooth=False, **kwargs):
         """
         :param preds: list of all predictions
@@ -34,11 +29,11 @@ class Metrics:
 
         if self.tokenizer is not None:
             results = self.bleu.compute(predictions=preds, references=references, max_order=max_n, smooth=smooth,
-                                   tokenizer=self.tokenizer.tokenize, **kwargs
-                                   )
+                                        tokenizer=self.tokenizer.tokenize, **kwargs
+                                        )
         else:
             results = self.bleu.compute(predictions=preds, references=references, max_order=max_n, smooth=smooth,
-                                   **kwargs)
+                                        **kwargs)
 
         return results
 
