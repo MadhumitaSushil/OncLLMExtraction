@@ -2,6 +2,7 @@
 
 This repository contains the code and guidelines for replicating the annotations and analysis in the manuscript 
 [CORAL: Expert-Curated Oncology Reports to Advance Language Model Inference](https://ai.nejm.org/doi/full/10.1056/AIdbp2300110).
+If you are mainly interested in benchmarking newer open source models on this dataset, please use code in [this](https://github.com/MadhumitaSushil/coral) repository instead.
 
 Dataset of 20 breast cancer and 20 pancreatic cancer progress notes were annotated comprehensively by medical experts to encode information of clinical interest from clinical notes. The annotations encompassed 9028 entities, 9986 modifiers, and 5312 relationships. This dataset was further used to benchmark zero-shot, oncology-specific relational information extraction capability of closed and open source LLMs. The dataset can be downloaded [here](https://physionet.org/content/curated-oncology-reports/1.0/) for non-commercial research purposes. Please note that if the dataset is being used to evaluate any proprietary models for example OpenAI models or Google models, it needs to be done within a secure, HIPAA-compliant framework such that no data is ever permanently transferred to or monitored by the underlying company. Azure OpenAI studio with all data transfer, monitoring, and filtering turned off may be a compatible solution.
 
